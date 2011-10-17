@@ -52,12 +52,20 @@ sub register_service {
 
     $self->start_listen($app);
 
-    $self->{exit_guard} = AE::cv {
+    $self->{listen_guard} = AE::cv {
         # Make sure that we are not listening on a socket anymore, while
         # other events are being flushed
         delete $self->{listen_guards};
     };
+    $self->{listen_guard}->begin;
+
+    $self->{exit_guard} = AE::cv;
     $self->{exit_guard}->begin;
+}
+
+sub exit_guard {
+    my $self = shift;
+    return $self->{exit_guard};
 }
 
 sub _create_tcp_server {
@@ -579,12 +587,24 @@ sub _write_real_fh {
     }
 }
 
+sub shutdown {
+    my $self = shift;
+    $self->{listen_guard}->end;
+    $self->{exit_guard}->end;
+}
+
+sub wait {
+    my $self = shift;
+    $self->{listen_guard}->recv;
+    $self->{exit_guard}->recv;
+}
+
 sub run {
     my $self = shift;
     $self->register_service(@_);
 
-    my $w; $w = AE::signal QUIT => sub { $self->{exit_guard}->end; undef $w };
-    $self->{exit_guard}->recv;
+    my $w; $w = AE::signal QUIT => sub { $self->shutdown; undef $w };
+    $self->wait;
 }
 
 package Twiggy::Writer;
